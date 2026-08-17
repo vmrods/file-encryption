@@ -43,6 +43,7 @@ pub mod fsutil;
 pub mod header;
 pub mod keys;
 pub mod manifest;
+pub mod pack;
 pub mod stream;
 
 pub use archive::{
@@ -59,6 +60,7 @@ pub use keys::{
     derive_content_key, derive_kek, new_keyring, rewrap_keyring, unwrap_master_key, Key, Passphrase,
 };
 pub use manifest::{Entry, EntryKind, Manifest};
+pub use pack::{pack_archive, unpack_archive, PackSummary, PACK_EXT};
 pub use stream::{
     decrypt_body, decrypt_with_master, decrypt_with_passphrase, encrypt_stream,
     encrypt_stream_with_progress, verify_with_master, ContainerStats,

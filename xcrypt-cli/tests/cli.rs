@@ -333,6 +333,115 @@ fn padding_mode_roundtrips_through_the_binary() {
 }
 
 #[test]
+fn pack_and_unpack_round_trip_through_the_binary() {
+    let fx = fixture();
+    assert_eq!(code(&encrypt(&fx, "pw", &[])), 0);
+
+    let packed = fx.vault.parent().unwrap().join("bundle.xcra");
+    let out = xcrypt(
+        &[
+            "pack",
+            fx.vault.to_str().unwrap(),
+            "-o",
+            packed.to_str().unwrap(),
+            "--json",
+        ],
+        Some("pw"),
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+
+    let value: serde_json::Value = serde_json::from_str(stdout(&out).trim()).unwrap();
+    assert_eq!(value["command"], "pack");
+    assert_eq!(value["objects"], 3);
+    assert!(packed.is_file(), "pack produced a single file");
+
+    // A packed archive is one file, not a directory.
+    assert!(!packed.is_dir());
+
+    let restored_vault = fx.vault.parent().unwrap().join("restored-vault");
+    let out = xcrypt(
+        &[
+            "unpack",
+            packed.to_str().unwrap(),
+            "-o",
+            restored_vault.to_str().unwrap(),
+        ],
+        Some("pw"),
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stdout(&out).contains("Unpacked 3 objects"));
+
+    // And the unpacked archive behaves exactly like the original.
+    assert_eq!(
+        code(&xcrypt(
+            &["verify", restored_vault.to_str().unwrap()],
+            Some("pw")
+        )),
+        0
+    );
+
+    let out = xcrypt(
+        &[
+            "decrypt",
+            restored_vault.to_str().unwrap(),
+            "-o",
+            fx.dest.to_str().unwrap(),
+        ],
+        Some("pw"),
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(fx.dest.join("src/notes.txt")).unwrap(),
+        b"plain notes"
+    );
+    assert_eq!(
+        std::fs::read(fx.dest.join("src/nested/data.bin")).unwrap(),
+        vec![42u8; 100_000]
+    );
+}
+
+#[test]
+fn unpacking_a_corrupt_bundle_exits_one_and_leaves_nothing() {
+    let fx = fixture();
+    assert_eq!(code(&encrypt(&fx, "pw", &[])), 0);
+
+    let packed = fx.vault.parent().unwrap().join("bundle.xcra");
+    assert_eq!(
+        code(&xcrypt(
+            &[
+                "pack",
+                fx.vault.to_str().unwrap(),
+                "-o",
+                packed.to_str().unwrap()
+            ],
+            Some("pw")
+        )),
+        0
+    );
+
+    let mut bytes = std::fs::read(&packed).unwrap();
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 1;
+    std::fs::write(&packed, &bytes).unwrap();
+
+    let restored = fx.vault.parent().unwrap().join("restored-vault");
+    let out = xcrypt(
+        &[
+            "unpack",
+            packed.to_str().unwrap(),
+            "-o",
+            restored.to_str().unwrap(),
+            "--json",
+        ],
+        Some("pw"),
+    );
+    assert_eq!(code(&out), 1);
+    let value: serde_json::Value = serde_json::from_str(stdout(&out).trim()).unwrap();
+    assert_eq!(value["error"]["kind"], "chunk_auth_failed");
+    assert!(!restored.exists());
+}
+
+#[test]
 fn quiet_mode_keeps_stdout_clean_of_progress() {
     let fx = fixture();
     let out = encrypt(&fx, "pw", &["--quiet"]);

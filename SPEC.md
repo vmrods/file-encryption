@@ -272,6 +272,49 @@ writes its own object, so the manifest swap is the single serialization point.
 Manifest entry order is the deterministic walk order, not the order threads
 finished in.
 
+### 5.3 Packed archives
+
+`xcrypt pack` bundles an archive directory into a single file. The packed file is
+an ordinary `XCR1` container of `kind = Pack`, carrying a **copy of the archive's
+keyring**, so it opens with the archive's own passphrase and introduces no second
+Argon2 pass. Its content key is
+`HKDF-SHA256(master_key, ∅, pack_file_id ‖ "xcrypt-v1-pack")` — a different key
+from every file and from the manifest, by domain separation.
+
+Its *plaintext* is a framed bundle:
+
+```text
+"XPK1" ‖ u16_le version ‖ entry* ‖ 0xFF
+
+entry := 0x01 ‖ file_id[16] ‖ u64_le len ‖ object_bytes     (an object container)
+       | 0x00 ‖              u64_le len ‖ manifest_bytes    (the manifest container)
+```
+
+Objects come first, the manifest last. Unpacking therefore persists the manifest
+last, preserving the same crash-consistency ordering a directory archive has.
+Each entry is written to a temporary file in the destination and renamed only
+once its declared length is complete; a failed unpack removes the destination
+entirely, because a partially unpacked archive is one whose manifest references
+objects that are not present.
+
+Both directions stream: neither packing nor unpacking buffers more than one
+chunk, whatever the archive's size. Objects the manifest does not reference are
+dropped during packing.
+
+**What packing changes about the threat model.** A directory archive exposes the
+object count — which is the file count — and each object's size. A packed file is
+one blob, so only its total size is visible. That closes the file-count leak in
+§6.1 entirely and the per-file size leak without needing `--pad-names`.
+
+Objects inside a packed file are encrypted twice: once as their own containers,
+once as part of the pack stream. This costs CPU and nothing else, and is why
+packing is a separate step rather than the default output.
+
+`ContainerKind::Pack` was added after version 1 shipped. Its discriminant is
+appended, so containers written before it still parse unchanged; a build
+predating it rejects a packed file as a malformed header rather than misreading
+one.
+
 ---
 
 ## 6. Threat model
@@ -281,8 +324,11 @@ finished in.
 **An offline attacker holding the ciphertext**, with or without write access to
 it. Such an attacker learns:
 
-* that the archive exists, its total size, and how many objects it contains;
-* each object's size (bucketed to a power of two with `--pad-names`);
+* that the archive exists and its total size;
+* how many objects it contains, and each object's size — **only in the directory
+  form**. `xcrypt pack` collapses the archive into one container and removes both
+  leaks; `--pad-names` buckets object sizes to powers of two without hiding the
+  count;
 * nothing else. No filename, path, extension, directory structure, file count of
   any subtree, mode, mtime, or content.
 

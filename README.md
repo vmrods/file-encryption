@@ -45,7 +45,22 @@ xcrypt decrypt ~/vault -o ~/restored
 
 # Change the passphrase. Rewraps 32 bytes; does not re-encrypt any file.
 xcrypt rewrap ~/vault
+
+# Bundle the archive into one file to move, upload, or hand over — and back.
+xcrypt pack ~/vault -o vault.xcra
+xcrypt unpack vault.xcra -o ~/vault
 ```
+
+An archive is a **directory** while you work with it, and optionally a **single
+file** when you move it. The directory form is what makes atomic object writes, a
+cheap `rewrap`, and parallel encryption possible; packing is the step you take
+when you're done.
+
+Packing is not just convenience. A directory reveals how many objects it holds —
+which is your file count — and how large each one is. A packed file is a single
+container that reveals only a total size. It opens with the same passphrase, adds
+no second Argon2 pass, streams in both directions regardless of archive size, and
+`unpack` reproduces the directory byte-for-byte.
 
 Useful flags:
 
@@ -146,6 +161,7 @@ The suite is the deliverable, not an afterthought:
 | `corruption.rs` | Every bit flip, truncation, reorder, duplication, splice, header graft, and cost downgrade fails closed with a distinguishable error — and leaves no plaintext on disk |
 | `properties.rs` | Round trips across every chunk boundary; arbitrary corruption, truncation, and extension always fail |
 | `archive.rs` | Real trees: nesting, empty directories, unicode and emoji names, 200-byte filenames, non-UTF-8 names, symlinks, read-only and zero-length files, duplicate basenames, parallel encryption, atomic manifest swap, traversal defence |
+| `pack.rs` | Packed archives round-trip byte-for-byte, hide the object count and sizes, refuse a wrong passphrase, fail closed on corruption or truncation, and never leave a half-unpacked directory |
 | `format_stability.rs` | A committed golden archive decrypts on every run, so breaking compatibility takes a deliberate commit |
 | `no_secrets_in_errors.rs` | No error variant renders a key, passphrase, or plaintext |
 | `cli.rs` | Exit codes, stdout/stderr discipline, JSON shape, and the absence of a passphrase flag |
@@ -167,8 +183,8 @@ deny.toml           cargo-deny: advisories, licenses, banned crypto stacks
 
 Summarised here, in full in [SPEC.md §6](SPEC.md): malware on the running
 machine, keys resident in memory (or swapped to disk) while `xcrypt` runs, the
-total size and file count of an archive, deletion or rollback of an archive by
-someone with write access, and coercion. It protects the ciphertext against an
+total size of an archive (and its file count, unless you `pack` it), deletion or
+rollback of an archive by someone with write access, and coercion. It protects the ciphertext against an
 offline attacker. That is the claim, and it is the whole claim.
 
 ## Licence

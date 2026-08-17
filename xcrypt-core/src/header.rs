@@ -83,6 +83,13 @@ pub enum ContainerKind {
     File,
     /// The archive manifest (paths, sizes, modes, mtimes).
     Manifest,
+    /// A whole archive directory bundled into one file by `xcrypt pack`.
+    ///
+    /// Added after version 1 shipped. The discriminant is appended, so every
+    /// container written before it still parses; a build that predates this
+    /// variant rejects a packed file as a malformed header rather than
+    /// misreading it.
+    Pack,
 }
 
 impl ContainerKind {
@@ -91,6 +98,7 @@ impl ContainerKind {
         match self {
             ContainerKind::File => b"xcrypt-v1-file",
             ContainerKind::Manifest => b"xcrypt-v1-manifest",
+            ContainerKind::Pack => b"xcrypt-v1-pack",
         }
     }
 }

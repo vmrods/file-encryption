@@ -110,6 +110,44 @@ pub enum Command {
         archive: PathBuf,
     },
 
+    /// Bundle an archive directory into a single file.
+    ///
+    /// Beyond convenience, this hides what a directory cannot: how many objects
+    /// the archive holds, and how large each one is. Opens with the same
+    /// passphrase as the archive.
+    Pack {
+        /// Archive directory to bundle.
+        #[arg(value_name = "ARCHIVE_DIR")]
+        archive: PathBuf,
+
+        /// Packed file to write. Conventionally `.xcra`.
+        #[arg(short = 'o', long = "output", value_name = "FILE")]
+        output: PathBuf,
+
+        /// Plaintext bytes per chunk for the packed container.
+        #[arg(long, value_name = "SIZE", default_value = "64KiB", value_parser = parse_chunk_size)]
+        chunk_size: u32,
+
+        /// Replace an existing packed file.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Restore a packed file back into an archive directory.
+    Unpack {
+        /// Packed file to read.
+        #[arg(value_name = "FILE")]
+        packed: PathBuf,
+
+        /// Archive directory to create.
+        #[arg(short = 'o', long = "output", value_name = "ARCHIVE_DIR")]
+        output: PathBuf,
+
+        /// Replace an existing archive at the output path.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Change an archive's passphrase.
     ///
     /// Rewraps the 32-byte master key and rewrites only the manifest, so this is

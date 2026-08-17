@@ -221,6 +221,17 @@ impl Manifest {
         self.entries.iter().map(Entry::size).sum()
     }
 
+    /// Every object identifier the manifest references, in entry order.
+    pub fn object_ids(&self) -> Vec<FileId> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                EntryKind::File { file_id, .. } => Some(*file_id),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Count of file entries.
     pub fn file_count(&self) -> usize {
         self.entries

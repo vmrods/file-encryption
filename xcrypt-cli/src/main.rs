@@ -30,7 +30,7 @@ use serde_json::json;
 
 use xcrypt_core::{
     decrypt_archive, encrypt_paths, list_archive, rewrap_archive, verify_archive, ArchiveSummary,
-    DecryptOptions, EncryptOptions, EntryKind, Error, KdfPolicy, Manifest, Result,
+    DecryptOptions, EncryptOptions, EntryKind, Error, KdfPolicy, Manifest, PackSummary, Result,
 };
 
 use args::{Cli, Command};
@@ -146,6 +146,55 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
 
+        Command::Pack {
+            archive,
+            output,
+            chunk_size,
+            force,
+        } => {
+            let options = EncryptOptions {
+                chunk_size,
+                force,
+                ..Default::default()
+            };
+            let passphrase = ui::read_passphrase("Passphrase", false, PASSPHRASE_ENV)?;
+            let reporter = Reporter::new("packing", cli.quiet, cli.json);
+            let summary = xcrypt_core::pack_archive(
+                &archive,
+                &output,
+                &passphrase,
+                &options,
+                reporter.as_progress(),
+            );
+            reporter.finish();
+            let summary = summary?;
+
+            emit_pack("pack", &output, &summary, cli.json);
+            Ok(())
+        }
+
+        Command::Unpack {
+            packed,
+            output,
+            force,
+        } => {
+            let passphrase = ui::read_passphrase("Passphrase", false, PASSPHRASE_ENV)?;
+            let reporter = Reporter::new("unpacking", cli.quiet, cli.json);
+            let summary = xcrypt_core::unpack_archive(
+                &packed,
+                &output,
+                &passphrase,
+                &KdfPolicy::default(),
+                force,
+                reporter.as_progress(),
+            );
+            reporter.finish();
+            let summary = summary?;
+
+            emit_pack("unpack", &output, &summary, cli.json);
+            Ok(())
+        }
+
         Command::Rewrap {
             archive,
             argon2_mem,
@@ -228,6 +277,42 @@ fn emit_summary(
     );
     for (path, reason) in &summary.skipped {
         println!("  skipped {}: {reason}", path.display());
+    }
+}
+
+/// Print a summary for `pack` or `unpack`.
+fn emit_pack(command: &str, path: &Path, summary: &PackSummary, json_output: bool) {
+    if json_output {
+        println!(
+            "{}",
+            json!({
+                "command": command,
+                "path": path.to_string_lossy(),
+                "objects": summary.objects,
+                "files": summary.files,
+                "bundle_bytes": summary.bundle_len,
+                "packed_bytes": summary.packed_len,
+            })
+        );
+        return;
+    }
+
+    if command == "pack" {
+        println!(
+            "Packed {} files ({} objects) into {} — {}",
+            summary.files,
+            summary.objects,
+            human_bytes(summary.packed_len),
+            path.display()
+        );
+        println!("The packed file hides the object count and individual object sizes.");
+    } else {
+        println!(
+            "Unpacked {} objects ({} files) into {}",
+            summary.objects,
+            summary.files,
+            path.display()
+        );
     }
 }
 
