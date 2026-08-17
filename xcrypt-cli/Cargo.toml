@@ -1,0 +1,23 @@
+[package]
+name = "xcrypt-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "xcrypt"
+path = "src/main.rs"
+
+[dependencies]
+xcrypt-core = { path = "../xcrypt-core" }
+clap.workspace = true
+indicatif.workspace = true
+rpassword.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

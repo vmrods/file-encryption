@@ -1,0 +1,59 @@
+# cargo-deny configuration.
+#
+# Run: cargo deny check advisories
+#      cargo deny check bans licenses sources
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# Any RUSTSEC advisory against a dependency fails the build. For a tool whose
+# whole purpose is confidentiality, an unpatched advisory in the dependency tree
+# is not something to warn about and move on from.
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses only. Anything else needs a deliberate decision, which is
+# what a failing build is for.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[bans]
+# Two versions of a crypto crate in one binary means two implementations, and a
+# key derived by one and used by the other. Warn loudly.
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+# Nothing in this tree may pull in an alternative crypto stack: the point of the
+# design is that every primitive comes from RustCrypto.
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "ring" },
+    { name = "rustls" },
+]
+
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

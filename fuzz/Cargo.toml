@@ -1,0 +1,52 @@
+[package]
+name = "xcrypt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Excluded from the root workspace: cargo-fuzz needs its own profile and a
+# nightly toolchain, neither of which should leak into normal builds.
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1.4", features = ["derive"] }
+xcrypt-core = { path = "../xcrypt-core" }
+
+[profile.release]
+debug = 1
+# Overflow checks stay on: an arithmetic bug in the parser should abort loudly
+# under the fuzzer rather than wrap silently.
+overflow-checks = true
+
+[[bin]]
+name = "header_parse"
+path = "fuzz_targets/header_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decrypt_container"
+path = "fuzz_targets/decrypt_container.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decrypt_with_passphrase"
+path = "fuzz_targets/decrypt_with_passphrase.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "manifest_decode"
+path = "fuzz_targets/manifest_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false

@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # A weekly run so a newly published advisory is caught even with no commits.
+    - cron: "0 6 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+  # Warnings are failures in CI. Locally they stay warnings.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # --locked: CI must build the dependency versions the repo pinned, so a
+      # semver-compatible upgrade cannot silently change what was tested.
+      - name: cargo test
+        run: cargo test --workspace --locked --all-targets
+
+      - name: doc tests
+        run: cargo test --workspace --locked --doc
+
+      # The golden fixture and the corruption suite are the two suites that must
+      # never be skipped; run them by name so a filter mistake is visible.
+      - name: format-stability fixture
+        run: cargo test -p xcrypt-core --locked --test format_stability
+
+      - name: corruption suite
+        run: cargo test -p xcrypt-core --locked --test corruption
+
+  lint:
+    name: clippy + rustfmt + docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+
+      # Broken intra-doc links are a documentation bug like any other.
+      - name: rustdoc
+        run: cargo doc --workspace --locked --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  fuzz-targets-build:
+    name: fuzz targets build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Compiling the targets on every PR stops them from rotting. A short smoke
+      # run catches anything that panics immediately; long campaigns run offline.
+      - name: build fuzz targets
+        run: cargo fuzz build
+
+      - name: smoke-run each target
+        run: |
+          for target in header_parse decrypt_container decrypt_with_passphrase manifest_decode roundtrip; do
+            echo "=== $target"
+            cargo fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
+          done
+
+      - name: upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+
+  supply-chain:
+    name: advisories + licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install cargo-deny and cargo-audit
+        run: cargo install cargo-deny cargo-audit --locked
+
+      - name: cargo deny check advisories
+        run: cargo deny check advisories
+
+      - name: cargo deny check bans licenses sources
+        run: cargo deny check bans licenses sources
+
+      - name: cargo audit
+        run: cargo audit --deny warnings
+
+  msrv:
+    name: minimum supported Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Must match rust-version in the workspace Cargo.toml.
+      - uses: dtolnay/rust-toolchain@1.74.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --locked --all-targets

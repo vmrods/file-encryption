@@ -1,0 +1,32 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Release artifacts produced by ./build.sh
+/dist/
+
+# cargo-fuzz: keep the targets and any committed corpus seeds, drop the rest
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/coverage/
+
+# Coverage
+*.profraw
+*.profdata
+/lcov.info
+
+# Editors and OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Never commit real archives or test vaults; only the golden fixture under
+# xcrypt-core/tests/fixtures/ belongs in the repo.
+/vault/
+/*.xcr
+!xcrypt-core/tests/fixtures/**
+
+# Cargo.lock IS committed: this workspace ships a binary, and reproducible
+# dependency versions are the point of the pinned-version policy.
