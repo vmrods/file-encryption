@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+#
+# The handler behind the Finder Quick Actions.
+#
+#   xcrypt-finder encrypt <path>...    → <path>.xcra beside each item
+#   xcrypt-finder decrypt <path>...    → <path>-restored/ beside each item
+#
+# Automator runs this with a minimal environment: no interactive terminal, a
+# short PATH, and nowhere to print. So this script:
+#
+#   * finds the xcrypt binary itself rather than trusting PATH;
+#   * takes the passphrase from the login Keychain, falling back to a GUI prompt;
+#   * reports through notifications and dialogs, never stdout;
+#   * never overwrites anything — it picks a free name instead.
+#
+# It is also perfectly usable from a terminal, which is how it is tested.
+
+set -uo pipefail
+
+readonly SERVICE="${XCRYPT_KEYCHAIN_SERVICE:-xcrypt-vault}"
+readonly ACCOUNT="${USER:-$(id -un)}"
+readonly TITLE="xcrypt"
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+
+# Automator's PATH is roughly /usr/bin:/bin:/usr/sbin:/sbin, so a binary in
+# /usr/local/bin or ~/.cargo/bin is invisible unless we look for it.
+find_xcrypt() {
+    local candidate
+    for candidate in \
+        "${XCRYPT_BIN:-}" \
+        /usr/local/bin/xcrypt \
+        /opt/homebrew/bin/xcrypt \
+        "$HOME/.local/bin/xcrypt" \
+        "$HOME/.cargo/bin/xcrypt"
+    do
+        [[ -n "$candidate" && -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
+    done
+    command -v xcrypt 2>/dev/null && return 0
+    return 1
+}
+
+notify() {
+    /usr/bin/osascript -e "display notification \"$1\" with title \"${TITLE}\"" >/dev/null 2>&1
+}
+
+# Errors get a dialog: a notification is too easy to miss, and a failed encrypt
+# that looks like nothing happened is the worst outcome here.
+alert() {
+    /usr/bin/osascript \
+        -e "display alert \"${TITLE}\" message \"$1\" as critical" >/dev/null 2>&1
+    printf 'xcrypt-finder: %s\n' "$1" >&2
+}
+
+# ---------------------------------------------------------------------------
+# Passphrase
+# ---------------------------------------------------------------------------
+
+b64_decode_flag() {
+    if printf '' | base64 -d >/dev/null 2>&1; then printf '%s' "-d"; else printf '%s' "-D"; fi
+}
+
+# The Keychain entry written by set-passphrase.sh, decoded.
+passphrase_from_keychain() {
+    local raw
+    raw="$(security find-generic-password -a "$ACCOUNT" -s "$SERVICE" -w 2>/dev/null)" || return 1
+    case "$raw" in
+        xcb64:*) printf '%s' "${raw#xcb64:}" | base64 "$(b64_decode_flag)" ;;
+        *)       printf '%s' "$raw" ;;
+    esac
+}
+
+# A hidden GUI prompt, for when no Keychain entry exists.
+passphrase_from_dialog() {
+    /usr/bin/osascript \
+        -e "display dialog \"Passphrase for ${TITLE}:\" default answer \"\" with hidden answer buttons {\"Cancel\", \"OK\"} default button \"OK\" with title \"${TITLE}\"" \
+        -e 'text returned of result' 2>/dev/null
+}
+
+get_passphrase() {
+    local pw
+    if pw="$(passphrase_from_keychain)"; then
+        printf '%s' "$pw"
+        return 0
+    fi
+    pw="$(passphrase_from_dialog)" || return 1
+    printf '%s' "$pw"
+}
+
+# ---------------------------------------------------------------------------
+# Naming
+# ---------------------------------------------------------------------------
+
+# Never overwrite. "notes.xcra" taken? Try "notes-1.xcra", and so on.
+free_path() {
+    local base="$1" suffix="${2:-}" candidate="$1${2:-}" n=1
+    while [[ -e "$candidate" ]]; do
+        candidate="${base}-${n}${suffix}"
+        n=$((n + 1))
+    done
+    printf '%s' "$candidate"
+}
+
+# ---------------------------------------------------------------------------
+# Operations
+# ---------------------------------------------------------------------------
+
+do_encrypt() {
+    local bin="$1" pw="$2" input="$3"
+    local dir base output
+    dir="$(cd -- "$(dirname -- "$input")" && pwd)"
+    base="$(basename -- "$input")"
+    output="$(free_path "${dir}/${base}" ".xcra")"
+
+    if XCRYPT_PASSPHRASE="$pw" "$bin" encrypt "$input" -o "$output" --pack --quiet >/dev/null 2>&1; then
+        printf '%s' "$output"
+        return 0
+    fi
+    return 1
+}
+
+do_decrypt() {
+    local bin="$1" pw="$2" input="$3"
+    local dir base output staging status
+
+    dir="$(cd -- "$(dirname -- "$input")" && pwd)"
+    base="$(basename -- "$input")"
+    base="${base%.xcra}"
+    output="$(free_path "${dir}/${base}-restored")"
+
+    if [[ -d "$input" ]]; then
+        # Already an archive directory.
+        XCRYPT_PASSPHRASE="$pw" "$bin" decrypt "$input" -o "$output" --quiet >/dev/null 2>&1
+        status=$?
+    else
+        # A packed file: unpack to a staging directory, then decrypt from it.
+        staging="$(mktemp -d "${dir}/.xcrypt-unpack-XXXXXX")" || return 1
+        if XCRYPT_PASSPHRASE="$pw" "$bin" unpack "$input" -o "${staging}/archive" --quiet >/dev/null 2>&1; then
+            XCRYPT_PASSPHRASE="$pw" "$bin" decrypt "${staging}/archive" -o "$output" --quiet >/dev/null 2>&1
+            status=$?
+        else
+            status=1
+        fi
+        rm -rf "$staging"
+    fi
+
+    if [[ $status -eq 0 ]]; then
+        printf '%s' "$output"
+        return 0
+    fi
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+
+main() {
+    local mode="${1:-}"
+    shift || true
+
+    case "$mode" in
+        encrypt|decrypt) ;;
+        *)
+            alert "Usage: xcrypt-finder encrypt|decrypt <path>..."
+            exit 2
+            ;;
+    esac
+
+    if [[ $# -eq 0 ]]; then
+        alert "Nothing was selected."
+        exit 2
+    fi
+
+    local bin
+    if ! bin="$(find_xcrypt)"; then
+        alert "The xcrypt binary was not found. Install it with ./install.sh, or set XCRYPT_BIN."
+        exit 1
+    fi
+
+    local pw
+    if ! pw="$(get_passphrase)"; then
+        # Cancelling the prompt is a choice, not an error worth an alert.
+        exit 1
+    fi
+
+    local ok=0 failed=0 last=""
+    local input
+    for input in "$@"; do
+        if [[ ! -e "$input" ]]; then
+            failed=$((failed + 1))
+            continue
+        fi
+        if last="$("do_${mode}" "$bin" "$pw" "$input")"; then
+            ok=$((ok + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    done
+
+    if [[ $failed -gt 0 && $ok -eq 0 ]]; then
+        if [[ "$mode" == "decrypt" ]]; then
+            alert "Could not decrypt. The passphrase may be wrong, or the file may be damaged."
+        else
+            alert "Could not encrypt. Check that the destination is writable."
+        fi
+        exit 1
+    fi
+
+    local noun="item"
+    [[ $ok -ne 1 ]] && noun="items"
+
+    # Not `${mode^}`: that is bash 4, and macOS ships bash 3.2.
+    local verb="Encrypted"
+    [[ "$mode" == "decrypt" ]] && verb="Decrypted"
+
+    if [[ $failed -gt 0 ]]; then
+        notify "${verb} ${ok} ${noun}; ${failed} failed."
+    else
+        notify "${verb} ${ok} ${noun}."
+    fi
+
+    # Show the result, so it is obvious something happened.
+    [[ -n "$last" && -e "$last" ]] && open -R "$last" >/dev/null 2>&1
+
+    exit 0
+}
+
+main "$@"

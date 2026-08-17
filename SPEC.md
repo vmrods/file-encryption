@@ -301,6 +301,15 @@ Both directions stream: neither packing nor unpacking buffers more than one
 chunk, whatever the archive's size. Objects the manifest does not reference are
 dropped during packing.
 
+`xcrypt encrypt --pack` composes the two operations without leaving a directory
+behind. The archive is staged in a temporary directory beside the output file —
+the same filesystem, so the pack's `rename` stays atomic — then packed, then
+authenticated end to end, and only then is the staging copy removed. If the
+verification fails the output file is deleted too: a packed archive that does not
+authenticate is not a backup, and leaving one behind invites someone to trust it.
+No path through this operation deletes the only copy of anything before a checked
+replacement exists.
+
 **What packing changes about the threat model.** A directory archive exposes the
 object count — which is the file count — and each object's size. A packed file is
 one blob, so only its total size is visible. That closes the file-count leak in

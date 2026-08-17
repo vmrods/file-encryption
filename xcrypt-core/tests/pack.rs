@@ -500,3 +500,165 @@ fn a_large_archive_packs_without_buffering_it() {
     decrypt_archive(&restored, &dest, &pass("pw"), &dec_opts(), &NoProgress).unwrap();
     assert_eq!(snapshot(&source), snapshot(&dest.join("src")));
 }
+
+// ---------------------------------------------------------------------------
+// encrypt --pack: straight to a single file, with no directory left behind
+// ---------------------------------------------------------------------------
+
+#[test]
+fn encrypt_and_pack_produces_only_a_single_file() {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("src");
+    build_tree(&source);
+
+    let output = work.path().join("vault.xcra");
+    let (archive, packed) = xcrypt_core::encrypt_and_pack(
+        std::slice::from_ref(&source),
+        &output,
+        &pass("pw"),
+        &opts(),
+        &NoProgress,
+    )
+    .unwrap();
+
+    assert_eq!(archive.files, 4);
+    assert_eq!(packed.objects, 4);
+    assert!(output.is_file());
+
+    // The staging archive must be gone: one file, and nothing else, beside it.
+    let leftovers: Vec<PathBuf> = std::fs::read_dir(work.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p != &output && p != &source)
+        .collect();
+    assert!(leftovers.is_empty(), "staging survived: {leftovers:?}");
+}
+
+#[test]
+fn encrypt_and_pack_round_trips_to_the_original_tree() {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("src");
+    build_tree(&source);
+
+    let output = work.path().join("vault.xcra");
+    xcrypt_core::encrypt_and_pack(
+        std::slice::from_ref(&source),
+        &output,
+        &pass("pw"),
+        &opts(),
+        &NoProgress,
+    )
+    .unwrap();
+
+    let restored_archive = work.path().join("restored-archive");
+    unpack_archive(
+        &output,
+        &restored_archive,
+        &pass("pw"),
+        &policy(),
+        false,
+        &NoProgress,
+    )
+    .unwrap();
+
+    let dest = work.path().join("out");
+    decrypt_archive(
+        &restored_archive,
+        &dest,
+        &pass("pw"),
+        &dec_opts(),
+        &NoProgress,
+    )
+    .unwrap();
+
+    assert_eq!(snapshot(&source), snapshot(&dest.join("src")));
+}
+
+#[test]
+fn encrypt_and_pack_refuses_to_clobber_without_force() {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("src");
+    build_tree(&source);
+
+    let output = work.path().join("vault.xcra");
+    std::fs::write(&output, b"something precious").unwrap();
+
+    let err = xcrypt_core::encrypt_and_pack(
+        std::slice::from_ref(&source),
+        &output,
+        &pass("pw"),
+        &opts(),
+        &NoProgress,
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::WouldOverwrite { .. }));
+    assert_eq!(
+        std::fs::read(&output).unwrap(),
+        b"something precious",
+        "the refused run overwrote the target anyway"
+    );
+
+    let mut options = opts();
+    options.force = true;
+    xcrypt_core::encrypt_and_pack(
+        std::slice::from_ref(&source),
+        &output,
+        &pass("pw"),
+        &options,
+        &NoProgress,
+    )
+    .unwrap();
+}
+
+/// A failure part-way through must leave no staging directory behind, and no
+/// packed file either — the whole point is that nothing is deleted until a
+/// verified replacement exists.
+#[test]
+fn a_failed_encrypt_and_pack_leaves_nothing_behind() {
+    let work = tempfile::tempdir().unwrap();
+    let output = work.path().join("vault.xcra");
+
+    // A source that does not exist: the failure happens during the walk, after
+    // the staging directory has been created.
+    let err = xcrypt_core::encrypt_and_pack(
+        &[work.path().join("does-not-exist")],
+        &output,
+        &pass("pw"),
+        &opts(),
+        &NoProgress,
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::Io { .. }), "got {err}");
+    assert!(!output.exists(), "a failed run produced an output file");
+
+    let leftovers: Vec<PathBuf> = std::fs::read_dir(work.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert!(leftovers.is_empty(), "staging survived: {leftovers:?}");
+}
+
+#[test]
+fn verify_packed_authenticates_and_detects_tampering() {
+    let fx = fixture("pw");
+    pack_archive(&fx.archive, &fx.packed, &pass("pw"), &opts(), &NoProgress).unwrap();
+
+    xcrypt_core::verify_packed(&fx.packed, &pass("pw"), &policy()).unwrap();
+
+    assert!(matches!(
+        xcrypt_core::verify_packed(&fx.packed, &pass("wrong"), &policy()),
+        Err(Error::NoMatchingRecipient)
+    ));
+
+    let mut bytes = std::fs::read(&fx.packed).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    std::fs::write(&fx.packed, &bytes).unwrap();
+
+    assert!(matches!(
+        xcrypt_core::verify_packed(&fx.packed, &pass("pw"), &policy()),
+        Err(Error::ChunkAuthFailed { .. })
+    ));
+}

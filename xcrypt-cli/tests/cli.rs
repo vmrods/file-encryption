@@ -449,3 +449,61 @@ fn quiet_mode_keeps_stdout_clean_of_progress() {
     // The summary is on stdout; nothing resembling a progress bar is.
     assert!(!stdout(&out).contains('\r'));
 }
+
+#[test]
+fn encrypt_with_pack_writes_one_file_and_no_directory() {
+    let fx = fixture();
+    let packed = fx.vault.parent().unwrap().join("vault.xcra");
+
+    let out = xcrypt(
+        &[
+            "encrypt",
+            fx.source.to_str().unwrap(),
+            "-o",
+            packed.to_str().unwrap(),
+            "--pack",
+            "--argon2-mem",
+            CHEAP_MEM,
+            "--json",
+        ],
+        Some("pw"),
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+
+    let value: serde_json::Value = serde_json::from_str(stdout(&out).trim()).unwrap();
+    assert_eq!(value["packed"], true);
+    assert_eq!(value["files"], 3);
+    assert_eq!(value["objects"], 3);
+
+    assert!(packed.is_file(), "--pack must produce a single file");
+    assert!(!fx.vault.exists(), "no archive directory should remain");
+
+    // And it restores.
+    let restored = fx.vault.parent().unwrap().join("restored-vault");
+    assert_eq!(
+        code(&xcrypt(
+            &[
+                "unpack",
+                packed.to_str().unwrap(),
+                "-o",
+                restored.to_str().unwrap()
+            ],
+            Some("pw")
+        )),
+        0
+    );
+    let out = xcrypt(
+        &[
+            "decrypt",
+            restored.to_str().unwrap(),
+            "-o",
+            fx.dest.to_str().unwrap(),
+        ],
+        Some("pw"),
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(fx.dest.join("src/notes.txt")).unwrap(),
+        b"plain notes"
+    );
+}

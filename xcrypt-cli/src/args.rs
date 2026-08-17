@@ -45,9 +45,18 @@ pub enum Command {
         #[arg(required = true, value_name = "PATH")]
         paths: Vec<PathBuf>,
 
-        /// Archive directory to create.
-        #[arg(short = 'o', long = "output", value_name = "ARCHIVE_DIR")]
+        /// Where to write. An archive directory, or a single file with `--pack`.
+        #[arg(short = 'o', long = "output", value_name = "ARCHIVE_DIR|FILE")]
         output: PathBuf,
+
+        /// Write a single packed file instead of an archive directory.
+        ///
+        /// The archive is staged beside the output, packed, and authenticated
+        /// before the staging copy is removed — so nothing is deleted until a
+        /// verified replacement exists. Costs two extra passes over the data;
+        /// without it, `encrypt` writes a directory you can `pack` later.
+        #[arg(long)]
+        pack: bool,
 
         /// Plaintext bytes per chunk. Accepts suffixes: 64KiB, 1MiB.
         #[arg(long, value_name = "SIZE", default_value = "64KiB", value_parser = parse_chunk_size)]

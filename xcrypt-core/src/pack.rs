@@ -95,6 +95,21 @@ pub fn pack_archive(
     options: &EncryptOptions,
     progress: &dyn Progress,
 ) -> Result<PackSummary> {
+    pack_archive_inner(archive_dir, output, passphrase, options, progress)
+        .map(|(summary, _)| summary)
+}
+
+/// [`pack_archive`], also returning the master key it recovered.
+///
+/// Lets [`encrypt_and_pack`] authenticate the packed file without paying a
+/// second Argon2 pass just to derive the same key again.
+fn pack_archive_inner(
+    archive_dir: &Path,
+    output: &Path,
+    passphrase: &Passphrase,
+    options: &EncryptOptions,
+    progress: &dyn Progress,
+) -> Result<(PackSummary, crate::keys::Key)> {
     let manifest_path = archive_dir.join(MANIFEST_FILE);
     let objects_dir = archive_dir.join(OBJECTS_DIR);
 
@@ -191,12 +206,120 @@ pub fn pack_archive(
 
     progress.file_finished(output);
 
-    Ok(PackSummary {
-        objects,
-        files: manifest.file_count(),
-        bundle_len,
-        packed_len: std::fs::metadata(output).map(|m| m.len()).unwrap_or(0),
-    })
+    Ok((
+        PackSummary {
+            objects,
+            files: manifest.file_count(),
+            bundle_len,
+            packed_len: std::fs::metadata(output).map(|m| m.len()).unwrap_or(0),
+        },
+        master_key,
+    ))
+}
+
+/// Encrypt straight to a packed file, with no archive directory left behind.
+///
+/// The archive is built in a staging directory **beside the output file** — same
+/// filesystem, so the pack's rename stays atomic — then packed, then
+/// authenticated, and only then is the staging copy dropped. If any step fails,
+/// the staging directory is removed and the output file is never created, so
+/// there is no state in which the only copy of your data is one that was never
+/// checked.
+///
+/// Costs one extra full read of the data (the pack pass) plus one more (the
+/// verification pass) compared with `encrypt` alone. That is the price of
+/// deleting the staging archive safely.
+pub fn encrypt_and_pack(
+    inputs: &[PathBuf],
+    output: &Path,
+    passphrase: &Passphrase,
+    options: &EncryptOptions,
+    progress: &dyn Progress,
+) -> Result<(crate::ArchiveSummary, PackSummary)> {
+    if output.exists() && !options.force {
+        return Err(Error::WouldOverwrite {
+            path: output.to_path_buf(),
+        });
+    }
+
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+
+    // A `TempDir` removes itself on drop, including on the error paths below.
+    let staging = tempfile::Builder::new()
+        .prefix(".xcrypt-staging-")
+        .tempdir_in(parent)
+        .map_err(|e| Error::io(parent, e))?;
+    let archive_dir = staging.path().join("archive");
+
+    let archive_summary =
+        crate::archive::encrypt_paths(inputs, &archive_dir, passphrase, options, progress)?;
+
+    let (pack_summary, master_key) =
+        pack_archive_inner(&archive_dir, output, passphrase, options, progress)?;
+
+    // Authenticate the packed file before the staging archive disappears. If
+    // this fails the output is removed too: a file that does not verify is not
+    // a backup, and leaving it would invite someone to trust it.
+    progress.note("verifying the packed archive before removing the staging copy");
+    if let Err(error) = verify_packed_with_master(output, &master_key) {
+        let _ = std::fs::remove_file(output);
+        return Err(error);
+    }
+
+    drop(staging);
+    Ok((archive_summary, pack_summary))
+}
+
+/// Authenticate every byte of a packed file, writing nothing.
+///
+/// Costs one Argon2 pass plus a full read. Use it to check a packed archive you
+/// were handed, or one you are about to rely on.
+pub fn verify_packed(packed: &Path, passphrase: &Passphrase, policy: &KdfPolicy) -> Result<()> {
+    let mut reader = std::io::BufReader::new(File::open(packed).map_err(|e| Error::io(packed, e))?);
+    let parsed = Header::read_from(&mut reader)?;
+
+    if parsed.header.kind != ContainerKind::Pack {
+        return Err(Error::InvalidHeaderField {
+            detail: "this file is a container but not a packed archive".to_owned(),
+        });
+    }
+    let keyring = parsed
+        .header
+        .keyring
+        .as_ref()
+        .ok_or_else(|| Error::InvalidHeaderField {
+            detail: "packed archive carries no keyring".to_owned(),
+        })?;
+
+    let master_key = unwrap_master_key(keyring, passphrase, policy)?;
+    let content_key = derive_content_key(&master_key, &parsed.header.file_id, parsed.header.kind)?;
+    decrypt_body_with_progress(
+        &mut reader,
+        &mut std::io::sink(),
+        &parsed,
+        &content_key,
+        &mut |_| {},
+    )?;
+    Ok(())
+}
+
+/// [`verify_packed`] for a caller that already holds the master key.
+fn verify_packed_with_master(packed: &Path, master_key: &crate::keys::Key) -> Result<()> {
+    let mut reader = std::io::BufReader::new(File::open(packed).map_err(|e| Error::io(packed, e))?);
+    let parsed = Header::read_from(&mut reader)?;
+    let content_key = derive_content_key(master_key, &parsed.header.file_id, parsed.header.kind)?;
+    decrypt_body_with_progress(
+        &mut reader,
+        &mut std::io::sink(),
+        &parsed,
+        &content_key,
+        &mut |_| {},
+    )?;
+    Ok(())
 }
 
 /// Restore a packed file into an archive directory.

@@ -54,6 +54,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Encrypt {
             paths,
             output,
+            pack,
             chunk_size,
             argon2_mem,
             argon2_time,
@@ -82,6 +83,52 @@ fn run(cli: Cli) -> Result<()> {
 
             let passphrase = ui::read_passphrase("New passphrase", true, PASSPHRASE_ENV)?;
             let reporter = Reporter::new("encrypting", cli.quiet, cli.json);
+
+            if pack {
+                let result = xcrypt_core::encrypt_and_pack(
+                    &paths,
+                    &output,
+                    &passphrase,
+                    &options,
+                    reporter.as_progress(),
+                );
+                reporter.finish();
+                let (archive, packed) = result?;
+
+                if cli.json {
+                    println!(
+                        "{}",
+                        json!({
+                            "command": "encrypt",
+                            "path": output.to_string_lossy(),
+                            "packed": true,
+                            "files": archive.files,
+                            "directories": archive.directories,
+                            "symlinks": archive.symlinks,
+                            "bytes": archive.bytes,
+                            "objects": packed.objects,
+                            "packed_bytes": packed.packed_len,
+                        })
+                    );
+                } else {
+                    println!(
+                        "Encrypted and packed {} files, {} directories, {} symlinks ({}) → {} ({})",
+                        archive.files,
+                        archive.directories,
+                        archive.symlinks,
+                        human_bytes(archive.bytes),
+                        output.display(),
+                        human_bytes(packed.packed_len)
+                    );
+                    println!("Verified the packed file before removing the staging archive.");
+                    println!(
+                        "Unpack it with: xcrypt unpack {} -o <dir>",
+                        output.display()
+                    );
+                }
+                return Ok(());
+            }
+
             let summary = encrypt_paths(
                 &paths,
                 &output,
