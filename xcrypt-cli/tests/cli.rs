@@ -143,10 +143,21 @@ fn json_mode_emits_one_object_on_stdout() {
     let out = xcrypt(&["list", fx.vault.to_str().unwrap(), "--json"], Some("pw"));
     let value: serde_json::Value = serde_json::from_str(stdout(&out).trim()).unwrap();
     let entries = value["entries"].as_array().unwrap();
-    assert!(entries.iter().any(|e| e["path"] == "src/notes.txt"));
+    // `list` prints paths with the platform's separator; the archive itself
+    // stores components, so only the expected display string differs by OS.
+    let native = |relative: &str| {
+        relative
+            .split('/')
+            .collect::<std::path::PathBuf>()
+            .display()
+            .to_string()
+    };
+    let notes = native("src/notes.txt");
+    let nested = native("src/nested");
+    assert!(entries.iter().any(|e| e["path"] == notes.as_str()));
     assert!(entries
         .iter()
-        .any(|e| e["kind"] == "directory" && e["path"] == "src/nested"));
+        .any(|e| e["kind"] == "directory" && e["path"] == nested.as_str()));
 }
 
 #[test]
