@@ -99,18 +99,21 @@ fn the_golden_archive_lists_the_expected_metadata() {
         .map(|e| e.display_path().to_string_lossy().into_owned())
         .collect();
     paths.sort();
-    assert_eq!(
-        paths,
-        vec![
-            "fixture",
-            "fixture/empty.txt",
-            "fixture/hello.txt",
-            "fixture/nested",
-            "fixture/nested/counting.bin",
-            "fixture/ünïcödé",
-            "fixture/ünïcödé/naïve 🔐.txt",
-        ]
-    );
+    // display_path uses the platform's separator; the archive stores components.
+    let mut expected: Vec<String> = [
+        "fixture",
+        "fixture/empty.txt",
+        "fixture/hello.txt",
+        "fixture/nested",
+        "fixture/nested/counting.bin",
+        "fixture/ünïcödé",
+        "fixture/ünïcödé/naïve 🔐.txt",
+    ]
+    .iter()
+    .map(|path| path.replace('/', std::path::MAIN_SEPARATOR_STR))
+    .collect();
+    expected.sort();
+    assert_eq!(paths, expected);
 
     let sizes: Vec<u64> = manifest
         .entries
