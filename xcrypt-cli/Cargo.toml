@@ -11,7 +11,7 @@ name = "xcrypt"
 path = "src/main.rs"
 
 [dependencies]
-xcrypt-core = { path = "../xcrypt-core" }
+xcrypt-core = { path = "../xcrypt-core", version = "0.1" }
 clap.workspace = true
 indicatif.workspace = true
 rpassword.workspace = true

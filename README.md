@@ -1,5 +1,7 @@
 # xcrypt
 
+[![CI](https://github.com/vmrods/file-encryption/actions/workflows/ci.yml/badge.svg)](https://github.com/vmrods/file-encryption/actions/workflows/ci.yml) ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+
 Authenticated encryption for files and directory trees, in Rust.
 
 `xcrypt` encrypts a tree into an archive directory where **no filename, path,
@@ -20,7 +22,7 @@ protocol, the format, and the failure modes.
 
 ## Install
 
-Requires a stable Rust toolchain, 1.74 or newer ([rustup.rs](https://rustup.rs)).
+Requires a stable Rust toolchain, 1.85 or newer ([rustup.rs](https://rustup.rs)).
 
 ```sh
 git clone <this repo> && cd file-encryption
@@ -402,4 +404,4 @@ offline attacker. That is the claim, and it is the whole claim.
 
 ## Licence
 
-MIT OR Apache-2.0.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.

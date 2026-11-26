@@ -5,6 +5,16 @@
 
 [graph]
 all-features = true
+# Check the platforms xcrypt ships on (the CI matrix). Without this, cargo-deny
+# also walks dependencies that only exist on embedded targets, such as
+# atomic-polyfill under postcard's heapless on targets without native atomics.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
 
 [advisories]
 version = 2
