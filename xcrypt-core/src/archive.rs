@@ -375,6 +375,7 @@ pub fn decrypt_archive(
     let objects_dir = archive_dir.join(OBJECTS_DIR);
 
     std::fs::create_dir_all(dest).map_err(|e| Error::io(dest, e))?;
+    let dest = &destination_root(dest)?;
 
     // Directories first, shallowest to deepest, so file writes have somewhere to
     // land even if the walk order was unusual.
@@ -840,6 +841,21 @@ fn restore_modes(
         let _ = (dest, manifest, directories);
     }
     Ok(())
+}
+
+/// The root that restored paths are joined onto.
+///
+/// On Windows, the canonical form of a path is the extended-length `\\?\` form,
+/// which lifts the 260-character `MAX_PATH` limit, so long names and deep trees
+/// restore as they do elsewhere. `dest` must already exist.
+#[cfg(windows)]
+fn destination_root(dest: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(dest).map_err(|e| Error::io(dest, e))
+}
+
+#[cfg(not(windows))]
+fn destination_root(dest: &Path) -> Result<PathBuf> {
+    Ok(dest.to_path_buf())
 }
 
 /// Join a validated manifest entry onto the destination root.
